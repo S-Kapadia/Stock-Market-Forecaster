@@ -81,7 +81,7 @@ def _forecast_future(model, last_sequence_scaled, future_days):
 
 def get_stock_forecast(ticker, start_date="2020-01-01", seq_length=30,
                         num_epochs=200, hidden_dim=64, future_days=5):
-    df = yf.download(ticker, start=start_date)
+    df = yf.download(ticker, start=start_date, multi_level_index=False)
     if df.empty:
         return {"error": f"No data found for ticker {ticker}"}
 
@@ -92,7 +92,7 @@ def get_stock_forecast(ticker, start_date="2020-01-01", seq_length=30,
     future_preds_scaled = _forecast_future(model, close_scaled[-seq_length:], future_days)
     future_preds = scaler.inverse_transform(np.array(future_preds_scaled).reshape(-1, 1))
 
-    future_dates = pd.date_range(df.index[-1] + pd.Timedelta(days=1), periods=future_days)
+    future_dates = pd.bdate_range(df.index[-1] + pd.Timedelta(days=1), periods=future_days)
 
     return {
         "ticker": ticker,
@@ -121,7 +121,7 @@ def _window_metrics(preds, actual, last_known):
 
 def backtest_stock_model(ticker, start_date="2020-01-01", seq_length=30,
                           num_epochs=200, hidden_dim=64, future_days=5, num_windows=5):
-    df = yf.download(ticker, start=start_date)
+    df = yf.download(ticker, start=start_date, multi_level_index=False)
     if df.empty:
         return {"error": f"No data found for ticker {ticker}"}
 
