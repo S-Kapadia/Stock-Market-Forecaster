@@ -1,54 +1,71 @@
-import streamlit as st
+import re
+from datetime import date
+
+from flask import Flask, jsonify, render_template, request
+
 from market_model import marketPredict
-from stock_model import get_stock_forecast 
+from stock_model import get_stock_forecast
 
-st.set_page_config(page_title="Finance Assistant Demo", layout="wide")
+app = Flask(__name__)
 
-st.title("📈 Stock Market Assistant")
+TICKER_PATTERN = re.compile(r"^[A-Za-z0-9.\-]{1,10}$")
 
-# Predicting Market Health, whether or not to invest based on S&P 500 data
-st.header("📊 S&P 500 Market Prediction")
-if st.button("Check Market Health"):
-    market_result = marketPredict()
-    st.success(f"Market Prediction for Tomorrow: {market_result}")
+_market_cache = {"date": None, "result": None}
+_stock_cache = {}
 
-# Stock prediction section
-st.header("💹 Stock Price Prediction")
 
-# User inputs ticker symbol
-stock_code = st.text_input("Enter Stock Ticker (e.g., AAPL, MSFT, TSLA):")
-days_ahead = st.slider("Days Ahead to Predict", 1, 14, 5)
+def _get_market_prediction():
+    today = date.today()
+    if _market_cache["date"] != today:
+        _market_cache["result"] = marketPredict()
+        _market_cache["date"] = today
+    return _market_cache["result"]
 
-if st.button("Predict Stock Price") and stock_code:
-    with st.spinner(f"Predicting {stock_code} for {days_ahead} days..."):
-        result = get_stock_forecast(stock_code, future_days=days_ahead)
 
-        if "error" in result:
-            st.error(result["error"])
-        else:
-            # Display results
-            st.success(f"Predictions for {stock_code} starting {result['last_date']}:")
-            
-            # Show future forecast in table
-            forecast_df = (
-                st.dataframe(
-                    result["future_forecast"],
-                    use_container_width=True
-                )
-            )
+def _get_cached_stock_forecast(ticker, days):
+    key = (ticker.upper(), days, date.today())
+    if key not in _stock_cache:
+        _stock_cache[key] = get_stock_forecast(ticker, future_days=days)
+    return _stock_cache[key]
 
-            # Plot chart
-            import pandas as pd
-            import matplotlib.pyplot as plt
 
-            forecast_data = pd.DataFrame(result["future_forecast"])
-            forecast_data["date"] = pd.to_datetime(forecast_data["date"])
+@app.route("/")
+def index():
+    return render_template("index.html")
 
-            fig, ax = plt.subplots(figsize=(10, 4))
-            ax.plot(forecast_data["date"], forecast_data["predicted_price"], marker="o", label="Forecast")
-            ax.set_title(f"{stock_code} Stock Price Forecast")
-            ax.set_xlabel("Date")
-            ax.set_ylabel("Predicted Price")
-            ax.legend()
-            st.pyplot(fig)
 
+@app.route("/api/market")
+def api_market():
+    try:
+        prediction = _get_market_prediction()
+    except Exception as exc:
+        return jsonify({"error": f"Market prediction failed: {exc}"}), 502
+    return jsonify({"prediction": prediction})
+
+
+@app.route("/api/stock/<ticker>")
+def api_stock(ticker):
+    if not TICKER_PATTERN.match(ticker):
+        return jsonify({"error": "Invalid ticker symbol"}), 400
+
+    days_param = request.args.get("days", "5")
+    try:
+        days = int(days_param)
+    except ValueError:
+        return jsonify({"error": "days must be an integer"}), 400
+    if not 1 <= days <= 14:
+        return jsonify({"error": "days must be between 1 and 14"}), 400
+
+    try:
+        result = _get_cached_stock_forecast(ticker, days)
+    except Exception as exc:
+        return jsonify({"error": f"Forecast failed: {exc}"}), 502
+
+    if "error" in result:
+        return jsonify(result), 400
+
+    return jsonify(result)
+
+
+if __name__ == "__main__":
+    app.run(debug=True)

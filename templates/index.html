@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Stock Market Assistant</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<style>
+  :root {
+    --bg: #f7f7f9;
+    --card: #ffffff;
+    --border: #e1e3e8;
+    --text: #1d1f27;
+    --muted: #6b7280;
+    --accent: #2563eb;
+    --good: #16a34a;
+    --bad: #dc2626;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  main {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 2rem 1.25rem 4rem;
+  }
+  h1 {
+    font-size: 1.5rem;
+    margin-bottom: 0.25rem;
+  }
+  p.subtitle {
+    color: var(--muted);
+    margin-top: 0;
+    margin-bottom: 2rem;
+  }
+  section.card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+  h2 {
+    font-size: 1.05rem;
+    margin-top: 0;
+  }
+  button {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 0.55rem 1.1rem;
+    font-size: 0.95rem;
+    cursor: pointer;
+  }
+  button:hover { opacity: 0.9; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  input[type="text"] {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.5rem 0.65rem;
+    font-size: 0.95rem;
+    width: 100%;
+    max-width: 220px;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.75rem;
+  }
+  label { font-size: 0.9rem; color: var(--muted); }
+  #daysValue { font-weight: 600; }
+  .result {
+    margin-top: 0.75rem;
+    font-size: 0.95rem;
+  }
+  .result.good { color: var(--good); font-weight: 600; }
+  .result.bad { color: var(--bad); font-weight: 600; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 1rem;
+    font-size: 0.9rem;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.4rem 0.5rem;
+    border-bottom: 1px solid var(--border);
+  }
+  canvas {
+    margin-top: 1.25rem;
+    max-height: 320px;
+  }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Stock Market Assistant</h1>
+  <p class="subtitle">S&amp;P 500 direction prediction and per-ticker price forecasting.</p>
+
+  <section class="card">
+    <h2>Market Health</h2>
+    <button id="marketBtn" type="button">Check Market Health</button>
+    <div id="marketResult" class="result"></div>
+  </section>
+
+  <section class="card">
+    <h2>Stock Price Forecast</h2>
+    <div class="row">
+      <label for="tickerInput">Ticker</label>
+      <input id="tickerInput" type="text" placeholder="e.g. AAPL" value="AAPL">
+    </div>
+    <div class="row">
+      <label for="daysInput">Days ahead: <span id="daysValue">5</span></label>
+      <input id="daysInput" type="range" min="1" max="14" value="5">
+    </div>
+    <button id="forecastBtn" type="button">Predict Stock Price</button>
+    <div id="forecastResult" class="result"></div>
+    <table id="forecastTable" class="hidden">
+      <thead><tr><th>Date</th><th>Predicted Price</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <canvas id="forecastChart" class="hidden"></canvas>
+  </section>
+</main>
+
+<script>
+  const marketBtn = document.getElementById("marketBtn");
+  const marketResult = document.getElementById("marketResult");
+
+  marketBtn.addEventListener("click", async () => {
+    marketBtn.disabled = true;
+    marketResult.className = "result";
+    marketResult.textContent = "Checking...";
+    try {
+      const res = await fetch("/api/market");
+      const data = await res.json();
+      if (!res.ok) {
+        marketResult.className = "result bad";
+        marketResult.textContent = data.error || "Something went wrong.";
+      } else {
+        const invest = data.prediction === "Invest";
+        marketResult.className = "result " + (invest ? "good" : "bad");
+        marketResult.textContent = "Market Prediction for Tomorrow: " + data.prediction;
+      }
+    } catch (err) {
+      marketResult.className = "result bad";
+      marketResult.textContent = "Request failed: " + err;
+    } finally {
+      marketBtn.disabled = false;
+    }
+  });
+
+  const daysInput = document.getElementById("daysInput");
+  const daysValue = document.getElementById("daysValue");
+  daysInput.addEventListener("input", () => {
+    daysValue.textContent = daysInput.value;
+  });
+
+  const forecastBtn = document.getElementById("forecastBtn");
+  const tickerInput = document.getElementById("tickerInput");
+  const forecastResult = document.getElementById("forecastResult");
+  const forecastTable = document.getElementById("forecastTable");
+  const forecastTableBody = forecastTable.querySelector("tbody");
+  const forecastChartCanvas = document.getElementById("forecastChart");
+  let chart = null;
+
+  forecastBtn.addEventListener("click", async () => {
+    const ticker = tickerInput.value.trim();
+    const days = daysInput.value;
+
+    forecastResult.className = "result";
+    forecastTable.classList.add("hidden");
+    forecastChartCanvas.classList.add("hidden");
+
+    if (!ticker) {
+      forecastResult.className = "result bad";
+      forecastResult.textContent = "Enter a ticker symbol.";
+      return;
+    }
+
+    forecastBtn.disabled = true;
+    forecastResult.textContent = `Predicting ${ticker} for ${days} days...`;
+
+    try {
+      const res = await fetch(`/api/stock/${encodeURIComponent(ticker)}?days=${days}`);
+      const data = await res.json();
+      if (!res.ok) {
+        forecastResult.className = "result bad";
+        forecastResult.textContent = data.error || "Something went wrong.";
+        return;
+      }
+
+      forecastResult.className = "result good";
+      forecastResult.textContent = `Predictions for ${data.ticker} starting ${data.last_date}:`;
+
+      forecastTableBody.innerHTML = "";
+      data.future_forecast.forEach((row) => {
+        const tr = document.createElement("tr");
+        const tdDate = document.createElement("td");
+        tdDate.textContent = row.date;
+        const tdPrice = document.createElement("td");
+        tdPrice.textContent = row.predicted_price.toFixed(2);
+        tr.appendChild(tdDate);
+        tr.appendChild(tdPrice);
+        forecastTableBody.appendChild(tr);
+      });
+      forecastTable.classList.remove("hidden");
+
+      const labels = data.future_forecast.map((row) => row.date);
+      const prices = data.future_forecast.map((row) => row.predicted_price);
+
+      if (chart) {
+        chart.destroy();
+      }
+      forecastChartCanvas.classList.remove("hidden");
+      chart = new Chart(forecastChartCanvas, {
+        type: "line",
+        data: {
+          labels: labels,
+          datasets: [{
+            label: `${data.ticker} Forecast`,
+            data: prices,
+            borderColor: "#2563eb",
+            backgroundColor: "rgba(37, 99, 235, 0.1)",
+            tension: 0.2,
+            fill: true,
+          }],
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: true } },
+          scales: { y: { beginAtZero: false } },
+        },
+      });
+    } catch (err) {
+      forecastResult.className = "result bad";
+      forecastResult.textContent = "Request failed: " + err;
+    } finally {
+      forecastBtn.disabled = false;
+    }
+  });
+</script>
+</body>
+</html>
